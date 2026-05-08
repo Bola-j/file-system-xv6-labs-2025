@@ -4,16 +4,17 @@
 #include "memlayout.h"
 #include "riscv.h"
 #include "defs.h"
-
-
-#define IRQWATCH_PRINT_EVERY 100
+#include "irqwatch.h"
 
 struct irqwatch_state {
   struct spinlock lock;
   uint timer_count;
   uint uart_count;
   uint disk_count;
-  uint last_print_timer;
+  struct irqwatch_entry log[IRQWATCH_LOG_MAX];
+  uint log_head;
+  uint log_tail;
+  uint log_count;
 };
 
 static struct irqwatch_state irqwatch;
@@ -25,31 +26,17 @@ irqwatch_init(void)
   irqwatch.timer_count = 0;
   irqwatch.uart_count = 0;
   irqwatch.disk_count = 0;
-  irqwatch.last_print_timer = 0;
+  irqwatch.log_head = 0;
+  irqwatch.log_tail = 0;
+  irqwatch.log_count = 0;
 }
 
 void
 irqwatch_trap_timer(void)
 {
-  uint t = 0;
-  uint u = 0;
-  uint d = 0;
-  int do_print = 0;
-
   acquire(&irqwatch.lock);
   irqwatch.timer_count++;
-  if(irqwatch.timer_count - irqwatch.last_print_timer >= IRQWATCH_PRINT_EVERY){
-    irqwatch.last_print_timer = irqwatch.timer_count;
-    t = irqwatch.timer_count;
-    u = irqwatch.uart_count;
-    d = irqwatch.disk_count;
-    do_print = 1;
-  }
   release(&irqwatch.lock);
-
-  if(do_print){
-    printf("irqwatch: timer=%d uart=%d disk=%d\n", t, u, d);
-  }
 }
 
 void
@@ -66,4 +53,66 @@ irqwatch_trap_disk(void)
   acquire(&irqwatch.lock);
   irqwatch.disk_count++;
   release(&irqwatch.lock);
+}
+
+void
+irqwatch_note_write(struct inode *ip, int bytes, uint off, int is_append)
+{
+  struct irqwatch_entry entry;
+  struct proc *p = myproc();
+
+  if(ip == 0 || bytes <= 0)
+    return;
+
+  entry.ticks = ticks;
+  entry.pid = p ? p->pid : -1;
+  entry.inum = ip->inum;
+  entry.off = off;
+  entry.bytes = bytes;
+  entry.is_append = is_append;
+  if(p)
+    safestrcpy(entry.proc_name, p->name, sizeof(entry.proc_name));
+  else
+    safestrcpy(entry.proc_name, "?", sizeof(entry.proc_name));
+
+  acquire(&irqwatch.lock);
+  if(irqwatch.log_count < IRQWATCH_LOG_MAX){
+    irqwatch.log[irqwatch.log_head] = entry;
+    irqwatch.log_head = (irqwatch.log_head + 1) % IRQWATCH_LOG_MAX;
+    irqwatch.log_count++;
+  } else {
+    irqwatch.log[irqwatch.log_head] = entry;
+    irqwatch.log_head = (irqwatch.log_head + 1) % IRQWATCH_LOG_MAX;
+    irqwatch.log_tail = (irqwatch.log_tail + 1) % IRQWATCH_LOG_MAX;
+  }
+  release(&irqwatch.lock);
+}
+
+int
+irqwatch_read(uint64 dst, int max)
+{
+  struct proc *p = myproc();
+  struct irqwatch_entry tmp[IRQWATCH_LOG_MAX];
+  int i = 0;
+  int n = max;
+
+  if(n <= 0)
+    return 0;
+  if(n > IRQWATCH_LOG_MAX)
+    n = IRQWATCH_LOG_MAX;
+
+  acquire(&irqwatch.lock);
+  while(i < n && irqwatch.log_count > 0){
+    tmp[i] = irqwatch.log[irqwatch.log_tail];
+    irqwatch.log_tail = (irqwatch.log_tail + 1) % IRQWATCH_LOG_MAX;
+    irqwatch.log_count--;
+    i++;
+  }
+  release(&irqwatch.lock);
+
+  if(i == 0)
+    return 0;
+  if(copyout(p->pagetable, dst, (char *)tmp, i * sizeof(tmp[0])) < 0)
+    return -1;
+  return i;
 }
