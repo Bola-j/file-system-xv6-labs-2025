@@ -1,6 +1,10 @@
-#include "types.h"
 #include "spinlock.h"
+#include "types.h"
+#include "param.h"
+#include "memlayout.h"
+#include "riscv.h"
 #include "defs.h"
+
 
 #define IRQWATCH_PRINT_EVERY 100
 
