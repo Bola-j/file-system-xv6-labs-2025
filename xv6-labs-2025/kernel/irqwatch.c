@@ -61,8 +61,12 @@ irqwatch_note_write(struct inode *ip, int bytes, uint off, int is_append)
   struct irqwatch_entry entry;
   struct proc *p = myproc();
 
-  if(ip == 0 || bytes <= 0)
+  if(ip == 0)
     return;
+
+  // allow logging of zero-byte events (truncate/create/delete)
+  if(bytes < 0)
+    bytes = 0;
 
   entry.ticks = ticks;
   entry.pid = p ? p->pid : -1;
@@ -70,6 +74,105 @@ irqwatch_note_write(struct inode *ip, int bytes, uint off, int is_append)
   entry.off = off;
   entry.bytes = bytes;
   entry.is_append = is_append;
+  if(p)
+    safestrcpy(entry.proc_name, p->name, sizeof(entry.proc_name));
+  else
+    safestrcpy(entry.proc_name, "?", sizeof(entry.proc_name));
+
+  acquire(&irqwatch.lock);
+  if(irqwatch.log_count < IRQWATCH_LOG_MAX){
+    irqwatch.log[irqwatch.log_head] = entry;
+    irqwatch.log_head = (irqwatch.log_head + 1) % IRQWATCH_LOG_MAX;
+    irqwatch.log_count++;
+  } else {
+    irqwatch.log[irqwatch.log_head] = entry;
+    irqwatch.log_head = (irqwatch.log_head + 1) % IRQWATCH_LOG_MAX;
+    irqwatch.log_tail = (irqwatch.log_tail + 1) % IRQWATCH_LOG_MAX;
+  }
+  release(&irqwatch.lock);
+}
+
+void
+irqwatch_note_truncate(struct inode *ip)
+{
+  struct irqwatch_entry entry;
+  struct proc *p = myproc();
+
+  if(ip == 0)
+    return;
+
+  entry.ticks = ticks;
+  entry.pid = p ? p->pid : -1;
+  entry.inum = ip->inum;
+  entry.off = 0;
+  entry.bytes = 0;
+  entry.is_append = 0;
+  if(p)
+    safestrcpy(entry.proc_name, p->name, sizeof(entry.proc_name));
+  else
+    safestrcpy(entry.proc_name, "?", sizeof(entry.proc_name));
+
+  acquire(&irqwatch.lock);
+  if(irqwatch.log_count < IRQWATCH_LOG_MAX){
+    irqwatch.log[irqwatch.log_head] = entry;
+    irqwatch.log_head = (irqwatch.log_head + 1) % IRQWATCH_LOG_MAX;
+    irqwatch.log_count++;
+  } else {
+    irqwatch.log[irqwatch.log_head] = entry;
+    irqwatch.log_head = (irqwatch.log_head + 1) % IRQWATCH_LOG_MAX;
+    irqwatch.log_tail = (irqwatch.log_tail + 1) % IRQWATCH_LOG_MAX;
+  }
+  release(&irqwatch.lock);
+}
+
+void
+irqwatch_note_create(struct inode *ip)
+{
+  struct irqwatch_entry entry;
+  struct proc *p = myproc();
+
+  if(ip == 0)
+    return;
+
+  entry.ticks = ticks;
+  entry.pid = p ? p->pid : -1;
+  entry.inum = ip->inum;
+  entry.off = 0;
+  entry.bytes = 0; // creation event
+  entry.is_append = 0;
+  if(p)
+    safestrcpy(entry.proc_name, p->name, sizeof(entry.proc_name));
+  else
+    safestrcpy(entry.proc_name, "?", sizeof(entry.proc_name));
+
+  acquire(&irqwatch.lock);
+  if(irqwatch.log_count < IRQWATCH_LOG_MAX){
+    irqwatch.log[irqwatch.log_head] = entry;
+    irqwatch.log_head = (irqwatch.log_head + 1) % IRQWATCH_LOG_MAX;
+    irqwatch.log_count++;
+  } else {
+    irqwatch.log[irqwatch.log_head] = entry;
+    irqwatch.log_head = (irqwatch.log_head + 1) % IRQWATCH_LOG_MAX;
+    irqwatch.log_tail = (irqwatch.log_tail + 1) % IRQWATCH_LOG_MAX;
+  }
+  release(&irqwatch.lock);
+}
+
+void
+irqwatch_note_unlink(struct inode *ip)
+{
+  struct irqwatch_entry entry;
+  struct proc *p = myproc();
+
+  if(ip == 0)
+    return;
+
+  entry.ticks = ticks;
+  entry.pid = p ? p->pid : -1;
+  entry.inum = ip->inum;
+  entry.off = 0;
+  entry.bytes = 0; // deletion event
+  entry.is_append = 0;
   if(p)
     safestrcpy(entry.proc_name, p->name, sizeof(entry.proc_name));
   else
